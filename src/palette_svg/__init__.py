@@ -169,30 +169,14 @@ def map_pixels_to_palette(img: Image.Image, palette: np.ndarray) -> np.ndarray:
 
 
 def label_components(label_map: np.ndarray) -> Tuple[np.ndarray, int]:
-    """Connected-component labeling for integer-labeled 2D array.
+    """Connected-component labeling for 2D arrays using skimage for performance.
 
-    Returns (labels, n_components) where labels are 1..n for components (0 for background when used per color).
-    This function expects label_map to be the palette-indexed image; to extract components per color, call with mask==color_index.
+    Returns (labels, n_components) where labels are 1..n for components (0 for background).
     """
-    h, w = label_map.shape
-    labels = np.zeros((h, w), dtype=np.int32)
-    current = 0
-    for y in range(h):
-        for x in range(w):
-            if label_map[y, x] != 0 and labels[y, x] == 0:
-                current += 1
-                # flood fill
-                stack = [(y, x)]
-                labels[y, x] = current
-                while stack:
-                    py, px = stack.pop()
-                    for dy, dx in ((1,0),(-1,0),(0,1),(0,-1)):
-                        ny, nx = py+dy, px+dx
-                        if 0 <= ny < h and 0 <= nx < w:
-                            if label_map[ny, nx] != 0 and labels[ny, nx] == 0:
-                                labels[ny, nx] = current
-                                stack.append((ny, nx))
-    return labels, current
+    # Treat any nonzero entry as foreground; use 4-connectivity to match previous behavior
+    labels = measure.label(label_map != 0, connectivity=1)
+    n_components = int(labels.max())
+    return labels.astype(np.int32, copy=False), n_components
 
 
 def _convex_hull(points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:

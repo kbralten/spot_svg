@@ -263,6 +263,52 @@ class TestEndToEnd(unittest.TestCase):
             if os.path.exists(svg_path):
                 os.unlink(svg_path)
 
+    def test_holes_render_with_evenodd(self):
+        """Shapes with internal holes should render using even-odd fill in a single path."""
+        # Create a ring on white background: black outer rect with white inner rect (hole)
+        img = Image.new('RGB', (40, 40), (255, 255, 255))
+        for y in range(5, 35):
+            for x in range(5, 35):
+                img.putpixel((x, y), (0, 0, 0))
+        for y in range(15, 25):
+            for x in range(15, 25):
+                img.putpixel((x, y), (255, 255, 255))
+
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as img_file:
+            img_path = img_file.name
+            img.save(img_path)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as pal_file:
+            pal_file.write('000000\n')  # only black; background will be white
+            pal_path = pal_file.name
+
+        with tempfile.NamedTemporaryFile(suffix='.svg', delete=False) as svg_file:
+            svg_path = svg_file.name
+
+        try:
+            image_to_svg_file(
+                img_path,
+                svg_path,
+                n_colors=1,
+                max_size=100,
+                pixel_size=2,
+                min_region_size=1,
+                palette_file=pal_path,
+                background_color_hex='FFFFFF'
+            )
+            self.assertTrue(os.path.exists(svg_path))
+            with open(svg_path, 'r', encoding='utf-8') as f:
+                svg_text = f.read()
+            # Ensure even-odd fill is present
+            self.assertIn('fill-rule="evenodd"', svg_text)
+            # Heuristic: compound path should have multiple 'M ' move commands
+            self.assertGreaterEqual(svg_text.count('M '), 2)
+        finally:
+            os.unlink(img_path)
+            os.unlink(pal_path)
+            if os.path.exists(svg_path):
+                os.unlink(svg_path)
+
 
 if __name__ == '__main__':
     unittest.main()

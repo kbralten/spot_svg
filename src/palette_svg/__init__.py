@@ -255,7 +255,7 @@ def generate_svg_from_image(img: Image.Image, palette: np.ndarray, labelled: np.
             comp_mask = (comp_labels == comp_id).astype(np.uint8)
             # Pad mask by 1px on all sides to ensure contours close at image edges
             comp_mask_padded = np.pad(comp_mask, pad_width=1, mode='constant', constant_values=0)
-            # find_contours expects 2D array where rows are y, cols are x; returns (row, col)
+            # find_contours expects 2D array where rows are y, cols are x; returns many (row, col) contours
             contours = measure.find_contours(comp_mask_padded, level=0.5)
             if not contours:
                 # fallback to bounding rect
@@ -268,28 +268,26 @@ def generate_svg_from_image(img: Image.Image, palette: np.ndarray, labelled: np.
                 dwg.add(dwg.rect(insert=(insert_x, insert_y), size=(width, height), fill=color_hex, stroke='none'))
                 continue
 
-            # choose the longest contour (most points)
-            contour = max(contours, key=lambda c: c.shape[0])
-            # optional simplify the contour to reduce SVG complexity
-            try:
-                # approximate_polygon reduces number of vertices; tolerance controls simplification
-                contour = measure.approximate_polygon(contour, tolerance=1.5)
-            except Exception:
-                # if not available or fails, keep original
-                pass
+            # Build a compound path from all contours (outer and inner) and use even-odd fill
+            subpaths: List[List[Tuple[float, float]]] = []
+            for contour in contours:
+                try:
+                    contour = measure.approximate_polygon(contour, tolerance=1.5)
+                except Exception:
+                    pass
+                poly: List[Tuple[float, float]] = []
+                for (ry, rx) in contour:
+                    # subtract 1px padding to return to original coordinate system
+                    ry -= 1.0
+                    rx -= 1.0
+                    # convert to pixel centers and scale
+                    x = float(rx * pixel_size + pixel_size / 2.0)
+                    y = float(ry * pixel_size + pixel_size / 2.0)
+                    poly.append((x, y))
+                if len(poly) >= 3:
+                    subpaths.append(poly)
 
-            # contour coords are (row, col) -> (y, x). Convert to pixel centers and scale
-            poly = []
-            for (ry, rx) in contour:
-                # subtract 1px padding to return to original coordinate system
-                ry -= 1.0
-                rx -= 1.0
-                # round to pixel grid and shift to center
-                x = float(rx * pixel_size + pixel_size / 2.0)
-                y = float(ry * pixel_size + pixel_size / 2.0)
-                poly.append((x, y))
-
-            if len(poly) < 3:
+            if not subpaths:
                 # fallback bounding box
                 minx = int(min(xs)); maxx = int(max(xs))
                 miny = int(min(ys)); maxy = int(max(ys))
@@ -300,7 +298,36 @@ def generate_svg_from_image(img: Image.Image, palette: np.ndarray, labelled: np.
                 dwg.add(dwg.rect(insert=(insert_x, insert_y), size=(width, height), fill=color_hex, stroke='none'))
                 continue
 
-            dwg.add(dwg.polygon(points=poly, fill=color_hex, stroke='none'))
+            # Construct SVG path 'd' with multiple subpaths
+            def _path_from_points(points: List[Tuple[float, float]]) -> str:
+                d = []
+                # Move to first point
+                x0, y0 = points[0]
+                d.append(f"M {x0:.2f},{y0:.2f}")
+                # Line to subsequent points
+                for (x, y) in points[1:]:
+                    d.append(f"L {x:.2f},{y:.2f}")
+                # Close path
+                d.append("Z")
+                return " ".join(d)
+
+            d_parts: List[str] = []
+            for pts in subpaths:
+                d_parts.append(_path_from_points(pts))
+            d_attr = " ".join(d_parts)
+
+            path = dwg.path(d=d_attr, fill=color_hex, stroke='none')
+            # Ensure holes render correctly regardless of orientation
+            try:
+                # svgwrite supports 'fill_rule' attribute
+                path['fill-rule'] = 'evenodd'
+            except Exception:
+                # Fallback: assign via kwargs if supported
+                try:
+                    path.update({'fill-rule': 'evenodd'})
+                except Exception:
+                    pass
+            dwg.add(path)
 
     dwg.save()
 

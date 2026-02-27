@@ -271,6 +271,9 @@ def generate_svg_from_image(img: Image.Image, palette: np.ndarray, labelled: np.
             # Build a compound path from all contours (outer and inner) and use even-odd fill
             subpaths: List[List[Tuple[float, float]]] = []
             for contour in contours:
+                # Filter out very small contours before processing
+                if len(contour) < 4:  # Need at least 4 points for a meaningful shape
+                    continue
                 try:
                     contour = measure.approximate_polygon(contour, tolerance=1.5)
                 except Exception:
@@ -285,7 +288,18 @@ def generate_svg_from_image(img: Image.Image, palette: np.ndarray, labelled: np.
                     y = float(ry * pixel_size + pixel_size / 2.0)
                     poly.append((x, y))
                 if len(poly) >= 3:
-                    subpaths.append(poly)
+                    # Calculate the area of the polygon to filter out tiny artifacts
+                    area = 0.0
+                    n = len(poly)
+                    for i in range(n):
+                        j = (i + 1) % n
+                        area += poly[i][0] * poly[j][1]
+                        area -= poly[j][0] * poly[i][1]
+                    area = abs(area) / 2.0
+                    # Only include contours with reasonable area (scaled by pixel_size)
+                    min_area = min_region_size * pixel_size * pixel_size
+                    if area >= min_area:
+                        subpaths.append(poly)
 
             if not subpaths:
                 # fallback bounding box
